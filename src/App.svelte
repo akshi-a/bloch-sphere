@@ -1,5 +1,6 @@
 <script>
   import BlochSphere from './lib/BlochSphere.svelte';
+  //import * as Erie from "erie-web"
 </script>
 
 <main>
