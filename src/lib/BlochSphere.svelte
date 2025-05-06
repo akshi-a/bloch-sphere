@@ -1,8 +1,8 @@
 <script lang="ts">
-  import './BlockSphere.css';
   import { onMount } from 'svelte';
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+  import './BlockSphere.css'; 
 
   let container: HTMLDivElement;
   let scene: THREE.Scene;
@@ -11,85 +11,99 @@
   let controls: OrbitControls;
   let arrow: THREE.ArrowHelper;
 
-  // TRACK CURRENT DIRECTION
-  let currentDirection = new THREE.Vector3(1, 0, 0); // initial along x-axis
+  // state
+  let currentDirection = new THREE.Vector3(1, 0, 0).normalize();
+  let prevThetaDeg = 0;
+  let prevPhiDeg = 0;
 
-  let theta = Math.PI / 2; // polar angle
-  let phi = 0;             // azimuthal angle
-  $: thetaDeg = (theta * 180) / Math.PI;
-  $: phiDeg = (phi * 180) / Math.PI;
+  // UI sliders (start at 0 so deltas work)
+  let thetaSlider = 0;
+  let phiSlider = 0;
 
-  const updateArrow = (animated = true) => {
-  const targetDir = new THREE.Vector3(
-    Math.sin(theta) * Math.cos(phi),
-    Math.sin(theta) * Math.sin(phi),
-    Math.cos(theta)
-  ).normalize();
-
-  if (animated) {
+  const updateArrow = (newDir: THREE.Vector3) => {
     const startDir = currentDirection.clone();
     let progress = 0;
-    const duration = 500;
+    const duration = 200;
 
-    const animateArrow = () => {
+    const animateStep = () => {
       progress += 16 / duration;
-      const intermediateDir = startDir.clone().lerp(targetDir, Math.min(progress, 1)).normalize();
+      const intermediateDir = startDir.clone().lerp(newDir, Math.min(progress, 1)).normalize();
       arrow.setDirection(intermediateDir);
-
       if (progress < 1) {
-        requestAnimationFrame(animateArrow);
+        requestAnimationFrame(animateStep);
       } else {
-        currentDirection.copy(targetDir);
+        currentDirection.copy(newDir);
       }
     };
+    requestAnimationFrame(animateStep);
+  };
 
-    requestAnimationFrame(animateArrow);
-  } else {
-    arrow.setDirection(targetDir);
-    currentDirection.copy(targetDir);
-  }
-};
-
-
-  const applyGate = (axis: THREE.Vector3, angleDegrees: number) => {
+  
+  const rotateBy = (axis: THREE.Vector3, angleDegrees: number) => {
     const angle = THREE.MathUtils.degToRad(angleDegrees);
     const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-
     currentDirection.applyQuaternion(q).normalize();
+    updateArrow(currentDirection);
+  };
 
-    // Update theta and phi from currentDirection
-    theta = Math.acos(currentDirection.z);
-    phi = Math.atan2(currentDirection.y, currentDirection.x);
-    if (phi < 0) phi += 2 * Math.PI;
 
-    thetaDeg = THREE.MathUtils.radToDeg(theta);
-    phiDeg = THREE.MathUtils.radToDeg(phi);
 
-    updateArrow(true);
+  const handleThetaChange = () => {
+    const delta = thetaSlider - prevThetaDeg;
+    rotateBy(
+      new THREE.Vector3(-Math.sin(phiSlider * Math.PI / 180), Math.cos(phiSlider * Math.PI / 180), 0),
+      delta
+    );
+    prevThetaDeg = thetaSlider;
+  };
+
+  const handlePhiChange = () => {
+    const delta = phiSlider - prevPhiDeg;
+    rotateBy(new THREE.Vector3(0, 0, 1), delta);
+    prevPhiDeg = phiSlider;
+  };
+
+  const applyGate = (axis: THREE.Vector3, angleDegrees: number) => {
+    rotateBy(axis, angleDegrees);
   };
 
   const applyHadamard = () => {
-    const axis = new THREE.Vector3(1, 0, 1).normalize(); // (X+Z)/sqrt(2)
+    const axis = new THREE.Vector3(1, 0, 1).normalize();
     applyGate(axis, 180);
+  };
+
+  const resetArrow = () => {
+    const initialDir = new THREE.Vector3(1, 0, 0).normalize();
+    currentDirection.copy(initialDir);
+    prevThetaDeg = 0;
+    prevPhiDeg = 0;
+    thetaSlider = 0;
+    phiSlider = 0;
+    updateArrow(initialDir);
   };
 
   onMount(() => {
     scene = new THREE.Scene();
-
     camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
     camera.position.z = 3;
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
+    const resize = () => {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      renderer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
     container.appendChild(renderer.domElement);
 
     controls = new OrbitControls(camera, renderer.domElement);
 
     const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
-    const wireframeMaterial = new THREE.MeshBasicMaterial({
-      color: 0x00ffff,
-      wireframe: true
-    });
+    const wireframeMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true });
     const sphere = new THREE.Mesh(sphereGeometry, wireframeMaterial);
     scene.add(sphere);
 
@@ -110,45 +124,37 @@
 
 <div class="container">
   <div bind:this={container} class="bloch-visual"></div>
-  <div class="controls">
-    <div class="slider-group">
-      <label for="thetaSlider">Polar Angle θ (0°–180°): {thetaDeg.toFixed(1)}°</label>
-      <input id="thetaSlider" type="range" min="0" max="180" bind:value={thetaDeg}
-        on:input={() => { theta = THREE.MathUtils.degToRad(thetaDeg); updateArrow(true); }} />
+  <div class="controls">    
+    <label>Polar Angle θ Increment (deg): {thetaSlider}°</label>
+    <input type="range" min="-180" max="180" bind:value={thetaSlider} on:input={handleThetaChange} />
+    
+    <label>Azimuthal Angle φ Increment (deg): {phiSlider}°</label>
+    <input type="range" min="-180" max="180" bind:value={phiSlider} on:input={handlePhiChange} />
+    
+    <div class="rotation-group">
+      <label>Apply X-axis Rotations:</label>
+      <button on:click={() => applyGate(new THREE.Vector3(1, 0, 0), 180)}>Half Turn X (π)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(1, 0, 0), 90)}>Quarter Turn X (π/2)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(1, 0, 0), 45)}>Eighth Turn X (π/4)</button>
     </div>
-
-    <div class="slider-group">
-      <label for="phiSlider">Azimuthal Angle φ (0°–360°): {phiDeg.toFixed(1)}°</label>
-      <input id="phiSlider" type="range" min="0" max="360" bind:value={phiDeg}
-        on:input={() => { phi = THREE.MathUtils.degToRad(phiDeg); updateArrow(true); }} />
+    
+    <div class="rotation-group">
+      <label>Apply Y-axis Rotations:</label>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 1, 0), 180)}>Half Turn Y (π)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 1, 0), 90)}>Quarter Turn Y (π/2)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 1, 0), 45)}>Eighth Turn Y (π/4)</button>
     </div>
-
-    <fieldset>
-      <legend>Apply X Gates:</legend>
-      <button on:click={() => applyGate(new THREE.Vector3(1,0,0), 180)}>Half Turn X (π)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(1,0,0), 90)}>Quarter Turn X (π/2)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(1,0,0), 45)}>Eighth Turn X (π/4)</button>
-    </fieldset>
-
-    <fieldset>
-      <legend>Apply Y Gates:</legend>
-      <button on:click={() => applyGate(new THREE.Vector3(0,1,0), 180)}>Half Turn Y (π)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(0,1,0), 90)}>Quarter Turn Y (π/2)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(0,1,0), 45)}>Eighth Turn Y (π/4)</button>
-    </fieldset>
-
-    <fieldset>
-      <legend>Apply Z Gates:</legend>
-      <button on:click={() => applyGate(new THREE.Vector3(0,0,1), 180)}>Half Turn Z (π)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(0,0,1), 90)}>Quarter Turn Z (π/2)</button>
-      <button on:click={() => applyGate(new THREE.Vector3(0,0,1), 45)}>Eighth Turn Z (π/4)</button>
-    </fieldset>
-
-    <fieldset>
-      <legend>Hadamard Gate:</legend>
-      <button on:click={applyHadamard}>Apply H Gate</button>
-    </fieldset>
+    
+    <div class="rotation-group">
+      <label>Apply Z-axis Rotations:</label>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 0, 1), 180)}>Half Turn Z (π)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 0, 1), 90)}>Quarter Turn Z (π/2)</button>
+      <button on:click={() => applyGate(new THREE.Vector3(0, 0, 1), 45)}>Eighth Turn Z (π/4)</button>
+    </div>
+    
+    <label>Hadamard Gate:</label>
+    <button on:click={applyHadamard}>Apply H Gate</button>
+    
+    <button class="reset" on:click={resetArrow}>Reset Bloch Sphere</button>
   </div>
 </div>
-
-
